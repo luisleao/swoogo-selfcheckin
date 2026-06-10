@@ -1,0 +1,29 @@
+{
+  "name": "swoogo-selfcheckin",
+  "version": "1.0.0",
+  "description": "Express service for Swoogo self check-in.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/luisleao/swoogo-selfcheckin.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/luisleao/swoogo-selfcheckin/issues"
+  },
+  "homepage": "https://github.com/luisleao/swoogo-selfcheckin#readme",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
