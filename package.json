@@ -5,8 +5,13 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node --watch src/server.js",
+    "print:worker": "node workers/print-worker/index.js",
+    "print:worker:watch": "node workers/print-worker/index.js --mode=watch",
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test test/*.test.js workers/print-worker/test/*.test.js",
+    "test:api": "node --test test/*.test.js",
+    "test:print": "node --test workers/print-worker/test/*.test.js",
+    "test:web": "npm --prefix web test"
   },
   "engines": {
     "node": ">=18"
@@ -24,6 +29,8 @@
   },
   "homepage": "https://github.com/luisleao/swoogo-selfcheckin#readme",
   "dependencies": {
-    "express": "^5.2.1"
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "firebase-admin": "^14.0.0"
   }
 }

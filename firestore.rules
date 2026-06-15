@@ -1,0 +1,380 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return signedIn() && request.auth.token.superAdmin == true;
+    }
+
+    function memberPath(eventId) {
+      return /databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid);
+    }
+
+    function memberDoc(eventId) {
+      return get(memberPath(eventId));
+    }
+
+    function isActiveMember(eventId) {
+      return signedIn()
+        && exists(memberPath(eventId))
+        && memberDoc(eventId).data.status == "active";
+    }
+
+    function hasRole(eventId, role) {
+      return isSuperAdmin()
+        || (isActiveMember(eventId) && role in memberDoc(eventId).data.roles);
+    }
+
+    function isEventOperator(eventId) {
+      return isSuperAdmin()
+        || hasRole(eventId, "event_admin")
+        || hasRole(eventId, "event_manager");
+    }
+
+    function ownsEvent(eventId) {
+      return resource.data.eventId == eventId;
+    }
+
+    function hasNoSensitiveTopLevelKeys(data) {
+      return !data.keys().hasAny([
+        "secrets",
+        "secretRefs",
+        "integrationSecrets",
+        "encryptedSecrets",
+        "encryptedSwoogo",
+        "encryptedSendgrid",
+        "swoogoSecrets",
+        "sendgridSecrets"
+      ]);
+    }
+
+    function hasNoSensitiveSwoogoKeys(data) {
+      return !data.keys().hasAny(["swoogo"])
+        || !data.swoogo.keys().hasAny([
+          "consumerKey",
+          "consumerSecret",
+          "consumerKeySecretRef",
+          "consumerSecretSecretRef",
+          "encryptedConsumerKey",
+          "encryptedConsumerSecret",
+          "accessToken",
+          "refreshToken"
+        ]);
+    }
+
+    function hasNoSensitiveSendgridKeys(data) {
+      return !data.keys().hasAny(["sendgrid"])
+        || !data.sendgrid.keys().hasAny([
+          "apiKey",
+          "apiKeySecretRef",
+          "encryptedApiKey",
+          "eventWebhookSigningKey",
+          "eventWebhookSigningKeyRef",
+          "encryptedEventWebhookSigningKey"
+        ]);
+    }
+
+    function hasNoSensitiveEventFields(data) {
+      return hasNoSensitiveTopLevelKeys(data)
+        && hasNoSensitiveSwoogoKeys(data)
+        && hasNoSensitiveSendgridKeys(data);
+    }
+
+    function hasQueueScope(eventId, queueId) {
+      return isEventOperator(eventId)
+        || (isActiveMember(eventId) && queueId in memberDoc(eventId).data.allowedQueueIds);
+    }
+
+    function hasSessionScope(eventId, sessionId) {
+      return isEventOperator(eventId)
+        || (isActiveMember(eventId) && sessionId in memberDoc(eventId).data.allowedSessionIds);
+    }
+
+    function hasAreaScope(eventId, areaId) {
+      return isEventOperator(eventId)
+        || (isActiveMember(eventId) && areaId in memberDoc(eventId).data.allowedAreaIds);
+    }
+
+    function hasGateScope(eventId, gateId) {
+      return isEventOperator(eventId)
+        || (isActiveMember(eventId) && gateId in memberDoc(eventId).data.allowedGateIds);
+    }
+
+    function canReadParticipants(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "precheckin_operator")
+        || hasRole(eventId, "print_operator")
+        || hasRole(eventId, "credential_reissuer")
+        || hasRole(eventId, "session_operator")
+        || hasRole(eventId, "gate_operator")
+        || hasRole(eventId, "area_manager")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadQueues(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "precheckin_operator")
+        || hasRole(eventId, "print_operator")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadPrint(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "print_operator")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadCredentials(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "print_operator")
+        || hasRole(eventId, "credential_reissuer")
+        || hasRole(eventId, "session_operator")
+        || hasRole(eventId, "gate_operator")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadSessions(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "session_operator")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadAreas(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "area_manager")
+        || hasRole(eventId, "gate_operator")
+        || hasRole(eventId, "session_operator")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadGates(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "gate_operator")
+        || hasRole(eventId, "viewer");
+    }
+
+    function canReadMessages(eventId) {
+      return isEventOperator(eventId);
+    }
+
+    function canReadAudit(eventId) {
+      return isEventOperator(eventId);
+    }
+
+    function canReadStats(eventId) {
+      return isEventOperator(eventId)
+        || hasRole(eventId, "viewer");
+    }
+
+    match /users/{uid} {
+      allow get: if isSuperAdmin() || (signedIn() && request.auth.uid == uid);
+      allow list: if isSuperAdmin();
+
+      // Backend owns user profile, status, and global role writes.
+      allow create, update, delete: if false;
+    }
+
+    match /events/{eventId} {
+      allow get, list: if (isSuperAdmin() || isActiveMember(eventId) || resource.data.registration == true)
+        && hasNoSensitiveEventFields(resource.data);
+
+      // Backend owns event creation, configuration, and integration metadata writes.
+      allow create, update, delete: if false;
+
+      match /members/{uid} {
+        allow get: if isSuperAdmin()
+          || (signedIn() && request.auth.uid == uid && isActiveMember(eventId))
+          || isEventOperator(eventId);
+        allow list: if isSuperAdmin() || isEventOperator(eventId);
+
+        // Backend owns role and resource-scope writes.
+        allow create, update, delete: if false;
+      }
+
+      match /integrationSecrets/{secretId} {
+        // Placeholder for Secret Manager refs or encrypted fallback material.
+        // Clients must never read or write raw, encrypted, or backend-only secret metadata.
+        allow read, write: if false;
+      }
+
+      match /participants/{registrantId} {
+        allow read: if canReadParticipants(eventId) && ownsEvent(eventId);
+
+        // Backend owns imports, manual registration, credentialing, and presence writes.
+        allow create, update, delete: if false;
+
+        match /accessPassages/{passageId} {
+          allow read: if canReadAreas(eventId)
+            && ownsEvent(eventId)
+            && resource.data.participantId == registrantId;
+
+          // Backend owns passage fanout writes.
+          allow create, update, delete: if false;
+        }
+      }
+
+      match /registrantTypes/{registrationTypeId} {
+        allow read: if isActiveMember(eventId) && ownsEvent(eventId);
+
+        // Backend owns Swoogo sync writes.
+        allow create, update, delete: if false;
+      }
+
+      match /queues/{queueId} {
+        allow read: if canReadQueues(eventId)
+          && ownsEvent(eventId)
+          && hasQueueScope(eventId, queueId);
+
+        // Backend owns queue configuration and metrics writes.
+        allow create, update, delete: if false;
+      }
+
+      match /queueEntries/{entryId} {
+        allow read: if canReadQueues(eventId)
+          && ownsEvent(eventId)
+          && hasQueueScope(eventId, resource.data.queueId);
+
+        // Backend owns queue allocation and delivery writes.
+        allow create, update, delete: if false;
+      }
+
+      match /printTerminals/{terminalId} {
+        allow read: if canReadPrint(eventId) && ownsEvent(eventId);
+
+        // Backend owns terminal registration and heartbeat until terminal write tests exist.
+        allow create, update, delete: if false;
+      }
+
+      match /printJobs/{jobId} {
+        allow read: if canReadPrint(eventId)
+          && ownsEvent(eventId)
+          && hasQueueScope(eventId, resource.data.queueId);
+
+        // Backend or trusted print worker owns claim, complete, fail, and retry writes.
+        allow create, update, delete: if false;
+      }
+
+      match /credentials/{badgeId} {
+        allow read: if canReadCredentials(eventId) && ownsEvent(eventId);
+
+        // Backend owns reserve, issue, deliver, void, and reissue writes.
+        allow create, update, delete: if false;
+      }
+
+      match /badgeLayouts/{layoutId} {
+        allow read: if isActiveMember(eventId) && ownsEvent(eventId);
+
+        // Backend owns publish/version writes so printed content remains audited.
+        allow create, update, delete: if false;
+      }
+
+      match /sessions/{sessionId} {
+        allow read: if canReadSessions(eventId)
+          && ownsEvent(eventId)
+          && hasSessionScope(eventId, sessionId);
+
+        // Backend owns Swoogo session sync and configuration writes.
+        allow create, update, delete: if false;
+      }
+
+      match /sessionCheckins/{checkinId} {
+        allow read: if canReadSessions(eventId)
+          && ownsEvent(eventId)
+          && hasSessionScope(eventId, resource.data.sessionId);
+
+        // Backend owns idempotent check-in and provider sync writes.
+        allow create, update, delete: if false;
+      }
+
+      match /accessAreas/{areaId} {
+        allow read: if canReadAreas(eventId)
+          && ownsEvent(eventId)
+          && hasAreaScope(eventId, areaId);
+
+        // Backend owns area configuration and occupancy writes.
+        allow create, update, delete: if false;
+
+        match /participantOverrides/{registrantId} {
+          allow read: if canReadAreas(eventId)
+            && ownsEvent(eventId)
+            && resource.data.areaId == areaId
+            && hasAreaScope(eventId, areaId);
+
+          // Backend owns participant-specific access override writes.
+          allow create, update, delete: if false;
+        }
+      }
+
+      match /gates/{gateId} {
+        allow read: if canReadGates(eventId)
+          && ownsEvent(eventId)
+          && hasGateScope(eventId, gateId);
+
+        // Backend owns gate configuration writes.
+        allow create, update, delete: if false;
+      }
+
+      match /areaPassages/{passageId} {
+        allow read: if canReadAreas(eventId)
+          && ownsEvent(eventId)
+          && (
+            hasAreaScope(eventId, resource.data.targetAreaId)
+            || hasGateScope(eventId, resource.data.gateId)
+          );
+
+        // Backend owns gate/session passage writes and current-area transaction updates.
+        allow create, update, delete: if false;
+      }
+
+      match /messageJobs/{messageJobId} {
+        allow read: if canReadMessages(eventId) && ownsEvent(eventId);
+
+        // Backend owns SendGrid job creation, provider updates, and retries.
+        allow create, update, delete: if false;
+      }
+
+      match /sendgridTemplates/{templateConfigId} {
+        allow read: if canReadMessages(eventId) && ownsEvent(eventId);
+
+        // Backend owns template mapping writes and must redact secret metadata in APIs.
+        allow create, update, delete: if false;
+      }
+
+      match /syncJobs/{syncJobId} {
+        allow read: if isEventOperator(eventId) && ownsEvent(eventId);
+
+        // Backend owns Swoogo/SendGrid sync job writes.
+        allow create, update, delete: if false;
+      }
+
+      match /auditLogs/{auditLogId} {
+        allow read: if canReadAudit(eventId) && ownsEvent(eventId);
+
+        // Backend owns append-only audit writes. Clients cannot create or edit audit logs.
+        allow create, update, delete: if false;
+      }
+
+      match /stats/{statsDoc} {
+        allow read: if canReadStats(eventId) && ownsEvent(eventId);
+
+        // Backend analytics writers own aggregate writes.
+        allow create, update, delete: if false;
+
+        match /timeBuckets/{bucketId} {
+          allow read: if canReadStats(eventId) && ownsEvent(eventId);
+
+          // Backend analytics writers own time-bucket aggregate writes.
+          allow create, update, delete: if false;
+        }
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

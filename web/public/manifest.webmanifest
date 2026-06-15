@@ -1,0 +1,18 @@
+{
+  "name": "Swoogo Check-in Operations",
+  "short_name": "Check-in Ops",
+  "description": "Operational tools for event credentialing, check-in, printing, and access control.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f7f8",
+  "theme_color": "#23424a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

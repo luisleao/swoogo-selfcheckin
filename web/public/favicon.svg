@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Swoogo Check-in Operations">
+  <rect width="64" height="64" rx="10" fill="#23424a"/>
+  <path d="M15 20h34v6H15zM15 30h24v6H15zM15 40h34v6H15z" fill="#f4d35e"/>
+  <circle cx="48" cy="33" r="7" fill="#5fb49c"/>
+</svg>

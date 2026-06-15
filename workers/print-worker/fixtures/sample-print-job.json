@@ -1,0 +1,24 @@
+{
+  "jobId": "dry-run-badge-26361060",
+  "participantId": "26361060",
+  "queueId": "default",
+  "terminalId": null,
+  "layoutId": "default-62x100",
+  "layoutVersion": 1,
+  "credentialBadgeId": "a7Kx9Qm2Pz4R8tY6uV3n",
+  "credentialId": "a7Kx9Qm2Pz4R8tY6uV3n;1781269200;26361060",
+  "status": "queued",
+  "attempts": 0,
+  "priority": 100,
+  "createdAt": "2026-06-12T12:00:00.000Z",
+  "claimedAt": null,
+  "printedAt": null,
+  "error": null,
+  "payloadSnapshot": {
+    "credentialQrPayload": "a7Kx9Qm2Pz4R8tY6uV3n;1781269200;26361060",
+    "fullName": "Ana Silva",
+    "firstName": "Ana",
+    "company": "Acme Events",
+    "jobTitle": "CMO"
+  }
+}
