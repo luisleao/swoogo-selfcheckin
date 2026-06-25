@@ -41,6 +41,26 @@ export interface SwoogoRegistrationTypesImportResult {
   registrationTypes: RegistrationTypeSummary[];
 }
 
+export interface SwoogoParticipantsImportRequest extends Partial<SwoogoConfigSaveRequest> {
+  maxPages?: number;
+  perPage?: number;
+}
+
+export interface SwoogoParticipantsImportResult {
+  createdCount: number;
+  importedCount: number;
+  participantIds: string[];
+  skippedCount: number;
+  updatedCount: number;
+}
+
+export interface SwoogoCacheClearResult {
+  config: SwoogoConfig;
+  participantsDeletedCount: number;
+  participantsSkippedCount: number;
+  registrationTypesDeletedCount: number;
+}
+
 export type SwoogoConfigTestRequest = Omit<SwoogoConfigSaveRequest, "clearRegistrationTypesOnEventChange">;
 
 export interface SendGridConfig {
@@ -190,6 +210,18 @@ export interface AttendeeSummary {
   swoogoRegistrantId: string;
 }
 
+export type AttendeeEventRecord = Record<string, unknown> & { id: string };
+
+export interface AttendeeDetail {
+  areaPassages: AttendeeEventRecord[];
+  attendee: AttendeeSummary;
+  credentials: AttendeeEventRecord[];
+  participant: AttendeeEventRecord;
+  participantAccessPassages: AttendeeEventRecord[];
+  printJobs: AttendeeEventRecord[];
+  sessionCheckins: AttendeeEventRecord[];
+}
+
 export interface ReissueCredentialResult {
   attendee: AttendeeSummary;
   credentialBadgeId: string;
@@ -243,6 +275,8 @@ export const createAdminApi = (client: ApiClient) => ({
   listEvents: () => client.get<EventSummary[]>("/api/events?registration=true"),
   listAreas: (eventId: string) => client.get<AreaSummary[]>(`/api/events/${eventId}/areas`),
   listAttendees: (eventId: string) => client.get<AttendeeSummary[]>(`/api/events/${eventId}/attendees`),
+  getAttendeeDetail: (eventId: string, attendeeId: string) =>
+    client.get<AttendeeDetail>(`/api/events/${eventId}/attendees/${encodeURIComponent(attendeeId)}`),
   listGates: (eventId: string) => client.get<GateSummary[]>(`/api/events/${eventId}/gates`),
   listMyEvents: () => client.get<EventSummary[]>("/api/me/events"),
   listQueues: (eventId: string) => client.get<QueueSummary[]>(`/api/events/${eventId}/queues`),
@@ -279,6 +313,13 @@ export const createAdminApi = (client: ApiClient) => ({
       `/api/events/${eventId}/integrations/swoogo/registration-types/import`,
       body
     ),
+  importSwoogoParticipants: (eventId: string, body: SwoogoParticipantsImportRequest = {}) =>
+    client.post<SwoogoParticipantsImportResult, SwoogoParticipantsImportRequest>(
+      `/api/events/${eventId}/integrations/swoogo/participants/import`,
+      body
+    ),
+  clearSwoogoCache: (eventId: string) =>
+    client.delete<SwoogoCacheClearResult>(`/api/events/${eventId}/integrations/swoogo/cache`),
   testSendGrid: (eventId: string, body: SendGridConfigTestRequest = {}) =>
     client.post<ConnectionTestResult, SendGridConfigTestRequest>(
       `/api/events/${eventId}/integrations/sendgrid/test`,

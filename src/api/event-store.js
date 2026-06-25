@@ -58,6 +58,32 @@ function dateValue(value) {
   return typeof value === "string" ? value : null;
 }
 
+function firestoreValue(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value.toDate === "function") {
+    return value.toDate().toISOString();
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => firestoreValue(entry));
+  }
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, firestoreValue(entry)]),
+    );
+  }
+
+  return value;
+}
+
 function membershipResponse(eventId, membership) {
   if (!membership) {
     return null;
@@ -374,15 +400,23 @@ function extractSwoogoList(body) {
     body,
     body?.data,
     body?.items,
+    body?.objects,
     body?.results,
+    body?.rows,
+    body?.types,
     body?.registrationTypes,
     body?.registration_types,
+    body?.registrants,
     body?.registrantTypes,
     body?.registrant_types,
     body?.data?.items,
+    body?.data?.objects,
     body?.data?.results,
+    body?.data?.rows,
+    body?.data?.types,
     body?.data?.registrationTypes,
     body?.data?.registration_types,
+    body?.data?.registrants,
     body?.data?.registrantTypes,
     body?.data?.registrant_types,
   ];
@@ -390,6 +424,29 @@ function extractSwoogoList(body) {
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) {
       return candidate;
+    }
+  }
+
+  const mapCandidates = [
+    body?.registrationTypes,
+    body?.registration_types,
+    body?.registrantTypes,
+    body?.registrant_types,
+    body?.types,
+    body?.data?.registrationTypes,
+    body?.data?.registration_types,
+    body?.data?.registrantTypes,
+    body?.data?.registrant_types,
+    body?.data?.types,
+  ];
+
+  for (const candidate of mapCandidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return Object.entries(candidate).map(([id, value]) => (
+        value && typeof value === "object"
+          ? { id, ...value }
+          : { id, name: value }
+      ));
     }
   }
 
@@ -403,6 +460,10 @@ function normalizeSwoogoRegistrationType(item) {
 
   const id = stringish(
     item.id,
+    item.registrationType?.id,
+    item.registration_type?.id,
+    item.registrantType?.id,
+    item.registrant_type?.id,
     item.registrationTypeId,
     item.registration_type_id,
     item.registrantTypeId,
@@ -410,6 +471,7 @@ function normalizeSwoogoRegistrationType(item) {
     item.typeId,
     item.type_id,
     item.value,
+    extractSwoogoField(item, REGISTRATION_TYPE_ID_KEYS),
   );
 
   if (!id) {
@@ -418,7 +480,18 @@ function normalizeSwoogoRegistrationType(item) {
 
   return {
     id,
-    name: stringish(item.name, item.title, item.label, item.description, id),
+    name: stringish(
+      item.name,
+      item.title,
+      item.label,
+      item.description,
+      item.registrationType?.name,
+      item.registration_type?.name,
+      item.registrantType?.name,
+      item.registrant_type?.name,
+      extractSwoogoField(item, REGISTRATION_TYPE_NAME_KEYS),
+      id,
+    ),
   };
 }
 
@@ -452,16 +525,23 @@ function normalizeSwoogoRegistrationTypeFromRegistrant(item) {
   const nestedText = !nested
     ? stringish(item.registrationType, item.registration_type, item.registrantType, item.registrant_type)
     : "";
+  const semanticId = extractSwoogoField(item, REGISTRATION_TYPE_ID_KEYS);
+  const semanticName = extractSwoogoField(item, REGISTRATION_TYPE_NAME_KEYS);
   const id = stringish(
     nested?.id,
+    nested?.value,
+    nested?.key,
     nested?.registrationTypeId,
     nested?.registration_type_id,
+    nested?.registrantTypeId,
+    nested?.registrant_type_id,
     item.registrationTypeId,
     item.registration_type_id,
     item.registrantTypeId,
     item.registrant_type_id,
     item.regTypeId,
     item.reg_type_id,
+    semanticId,
     nestedText,
   );
 
@@ -481,6 +561,10 @@ function normalizeSwoogoRegistrationTypeFromRegistrant(item) {
       item.registrant_type_name,
       item.regTypeName,
       item.reg_type_name,
+      nested?.displayValue,
+      nested?.display_value,
+      nested?.description,
+      semanticName,
       nestedText,
       id,
     ),
@@ -500,30 +584,579 @@ function normalizeSwoogoRegistrationTypesFromRegistrants(body) {
   return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function fetchSwoogoRegistrationTypesFromRegistrants(config, authorization) {
-  const attempts = [
+function normalizeEmail(value) {
+  return normalizeString(value, "").toLowerCase();
+}
+
+function parsePositiveInteger(value, fallback, max) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(parsed, max);
+}
+
+const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+const SWOOGO_FIELD_CONTAINERS = [
+  "answers",
+  "attendee",
+  "contact",
+  "customFields",
+  "custom_fields",
+  "data",
+  "fields",
+  "formData",
+  "form_data",
+  "profile",
+  "registrant",
+  "responses",
+];
+const SWOOGO_FIELD_LABEL_KEYS = [
+  "field",
+  "fieldId",
+  "field_id",
+  "fieldName",
+  "field_name",
+  "id",
+  "key",
+  "label",
+  "name",
+  "question",
+  "questionId",
+  "question_id",
+  "questionName",
+  "question_name",
+  "slug",
+  "title",
+];
+const SWOOGO_FIELD_VALUE_KEYS = [
+  "answer",
+  "answers",
+  "display",
+  "displayValue",
+  "display_value",
+  "text",
+  "value",
+  "values",
+  "id",
+  "label",
+  "name",
+];
+const EMAIL_KEYS = [
+  "attendeeEmail",
+  "attendee_email",
+  "contactEmail",
+  "contact_email",
+  "email",
+  "emailAddress",
+  "email_address",
+  "primaryEmail",
+  "primary_email",
+  "registrantEmail",
+  "registrant_email",
+];
+const FIRST_NAME_KEYS = ["firstName", "first_name", "fname", "givenName", "given_name"];
+const LAST_NAME_KEYS = ["familyName", "family_name", "lastName", "last_name", "lname", "surname"];
+const FULL_NAME_KEYS = ["fullName", "full_name", "name"];
+const COMPANY_KEYS = ["accountName", "account_name", "company", "organization", "organisation"];
+const JOB_TITLE_KEYS = ["jobTitle", "job_title", "position", "title"];
+const REGISTRATION_TYPE_ID_KEYS = [
+  "registrationType",
+  "registration_type",
+  "registrationTypeId",
+  "registration_type_id",
+  "registrantType",
+  "registrant_type",
+  "registrantTypeId",
+  "registrant_type_id",
+  "regType",
+  "reg_type",
+  "regTypeId",
+  "reg_type_id",
+  "type",
+  "typeId",
+  "type_id",
+];
+const REGISTRATION_TYPE_NAME_KEYS = [
+  "registrationTypeName",
+  "registration_type_name",
+  "registrantTypeName",
+  "registrant_type_name",
+  "regTypeName",
+  "reg_type_name",
+  "typeName",
+  "type_name",
+];
+const SWOOGO_PARTICIPANT_FIELDS = [
+  "id",
+  "email",
+  "emailAddress",
+  "email_address",
+  "primaryEmail",
+  "primary_email",
+  "firstName",
+  "first_name",
+  "lastName",
+  "last_name",
+  "fullName",
+  "full_name",
+  "name",
+  "company",
+  "organization",
+  "jobTitle",
+  "job_title",
+  "title",
+  "registration_type",
+  "registration_type_id",
+  "registration_type_name",
+  "registrationType",
+  "registrationTypeId",
+  "registrationTypeName",
+  "fields",
+  "answers",
+  "custom_fields",
+  "profile",
+  "contact",
+];
+
+function normalizeLookupKey(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function asLookupSet(keys) {
+  return new Set(keys.map((key) => normalizeLookupKey(key)).filter(Boolean));
+}
+
+function valueFromPrimitive(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value).trim();
+  }
+
+  return "";
+}
+
+function valueFromFieldValue(value) {
+  const primitive = valueFromPrimitive(value);
+
+  if (primitive) {
+    return primitive;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => valueFromFieldValue(entry)).find(Boolean) || "";
+  }
+
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  for (const key of SWOOGO_FIELD_VALUE_KEYS) {
+    const nested = valueFromFieldValue(value[key]);
+
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return "";
+}
+
+function valueFromSemanticKeys(source, lookupKeys) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return "";
+  }
+
+  for (const [key, value] of Object.entries(source)) {
+    if (lookupKeys.has(normalizeLookupKey(key))) {
+      const directValue = valueFromFieldValue(value);
+
+      if (directValue) {
+        return directValue;
+      }
+    }
+  }
+
+  return "";
+}
+
+function fieldLabelMatches(field, lookupKeys) {
+  if (!field || typeof field !== "object" || Array.isArray(field)) {
+    return false;
+  }
+
+  return SWOOGO_FIELD_LABEL_KEYS.some((key) => lookupKeys.has(normalizeLookupKey(field[key])));
+}
+
+function valueFromFieldCollection(collection, lookupKeys) {
+  if (!collection) {
+    return "";
+  }
+
+  if (Array.isArray(collection)) {
+    for (const field of collection) {
+      if (fieldLabelMatches(field, lookupKeys)) {
+        const value = valueFromFieldValue(field);
+
+        if (value) {
+          return value;
+        }
+      }
+
+      const directValue = valueFromSemanticKeys(field, lookupKeys);
+
+      if (directValue) {
+        return directValue;
+      }
+    }
+
+    return "";
+  }
+
+  if (typeof collection === "object") {
+    return valueFromSemanticKeys(collection, lookupKeys);
+  }
+
+  return "";
+}
+
+function extractSwoogoField(item, keys) {
+  const lookupKeys = asLookupSet(keys);
+  const directValue = valueFromSemanticKeys(item, lookupKeys);
+
+  if (directValue) {
+    return directValue;
+  }
+
+  for (const containerKey of SWOOGO_FIELD_CONTAINERS) {
+    const value = valueFromFieldCollection(item?.[containerKey], lookupKeys);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function extractEmail(value) {
+  const direct = valueFromFieldValue(value);
+  const match = direct.match(EMAIL_PATTERN);
+
+  return match ? match[0].toLowerCase() : "";
+}
+
+function extractSwoogoEmail(item) {
+  const candidates = [
+    extractSwoogoField(item, EMAIL_KEYS),
+    item?.email,
+    item?.emailAddress,
+    item?.email_address,
+    item?.primaryEmail,
+    item?.primary_email,
+  ];
+
+  for (const containerKey of SWOOGO_FIELD_CONTAINERS) {
+    const container = item?.[containerKey];
+
+    if (Array.isArray(container)) {
+      for (const field of container) {
+        if (fieldLabelMatches(field, asLookupSet(EMAIL_KEYS))) {
+          candidates.push(valueFromFieldValue(field));
+        }
+      }
+    }
+  }
+
+  return candidates.map((candidate) => extractEmail(candidate)).find(Boolean) || "";
+}
+
+function normalizeSwoogoRegistrant(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const id = stringish(
+    item.id,
+    item.registrantId,
+    item.registrant_id,
+    item.registrationId,
+    item.registration_id,
+    item.swoogoRegistrantId,
+  );
+
+  if (!id) {
+    return null;
+  }
+
+  const email = extractSwoogoEmail(item);
+  const firstName = extractSwoogoField(item, FIRST_NAME_KEYS);
+  const lastName = extractSwoogoField(item, LAST_NAME_KEYS);
+  const fullName = stringish(
+    extractSwoogoField(item, FULL_NAME_KEYS),
+    [firstName, lastName].filter(Boolean).join(" "),
+    email,
+    id,
+  );
+  const company = extractSwoogoField(item, COMPANY_KEYS);
+  const jobTitle = extractSwoogoField(item, JOB_TITLE_KEYS);
+  const registrationType = normalizeSwoogoRegistrationTypeFromRegistrant(item);
+
+  return {
+    company,
+    email,
+    firstName,
+    fullName,
+    id,
+    jobTitle,
+    lastName,
+    registrationStatus: stringish(item.status, item.registrationStatus, item.registration_status, "registered"),
+    registrationTypeId: registrationType?.id || "",
+    registrationTypeName: registrationType?.name || "",
+  };
+}
+
+function normalizeSwoogoParticipants(body) {
+  const participantsById = new Map();
+  let skippedCount = 0;
+
+  for (const item of extractSwoogoList(body)) {
+    const participant = normalizeSwoogoRegistrant(item);
+
+    if (!participant) {
+      skippedCount += 1;
+      continue;
+    }
+
+    participantsById.set(participant.id, participant);
+  }
+
+  return {
+    participants: Array.from(participantsById.values()),
+    skippedCount,
+  };
+}
+
+function swoogoParticipantRequestParams(config, page, perPage) {
+  const base = {
+    event_id: config.eventId,
+    page,
+    "per-page": perPage,
+  };
+
+  return [
+    {
+      ...base,
+      expand: "fields,answers,custom_fields,profile,contact",
+      fields: SWOOGO_PARTICIPANT_FIELDS.join(","),
+      include: "fields,answers,custom_fields,profile,contact",
+    },
+    {
+      ...base,
+      fields: SWOOGO_PARTICIPANT_FIELDS.join(","),
+    },
+    {
+      ...base,
+      expand: "fields,answers,custom_fields,profile,contact",
+      include: "fields,answers,custom_fields,profile,contact",
+    },
+    base,
+  ];
+}
+
+function participantImportScore(normalized) {
+  const emailCount = normalized.participants.filter((participant) => Boolean(participant.email)).length;
+
+  return emailCount * 10000 + normalized.participants.length;
+}
+
+async function fetchSwoogoParticipantPage(config, authorization, page, perPage) {
+  let best = null;
+  let lastFailure = null;
+
+  for (const params of swoogoParticipantRequestParams(config, page, perPage)) {
+    let body;
+    let response;
+
+    try {
+      ({ body, response } = await fetchJsonWithTimeout(
+        buildSwoogoApiUrl(config.baseUrl, "api/v1/registrants", params),
+        {
+          headers: {
+            Accept: "application/json",
+            Authorization: authorization,
+          },
+          method: "GET",
+        },
+      ));
+    } catch (error) {
+      lastFailure = { cause: error.message };
+      continue;
+    }
+
+    if (!response.ok) {
+      lastFailure = { status: response.status };
+      continue;
+    }
+
+    const normalized = normalizeSwoogoParticipants(body);
+    const candidate = {
+      body,
+      normalized,
+      rawCount: extractSwoogoList(body).length,
+      score: participantImportScore(normalized),
+    };
+
+    if (!best || candidate.score > best.score) {
+      best = candidate;
+    }
+
+    if (
+      candidate.normalized.participants.length > 0
+      && candidate.normalized.participants.every((participant) => Boolean(participant.email))
+    ) {
+      return candidate;
+    }
+  }
+
+  if (best) {
+    return best;
+  }
+
+  throw conflict(
+    "SWOOGO_PARTICIPANT_IMPORT_FAILED",
+    "Unable to load Swoogo registrants. Check the Swoogo event ID and credentials.",
+    { details: lastFailure },
+  );
+}
+
+function hasNextSwoogoPage(body, page, perPage, rawCount) {
+  const nextLink = body?.links?.next
+    || body?._links?.next?.href
+    || body?.meta?.links?.next
+    || body?.pagination?.next
+    || body?.next
+    || body?.nextPageUrl
+    || body?.next_page_url;
+
+  if (nextLink) {
+    return true;
+  }
+
+  const pageCount = Number(
+    body?.pageCount
+      || body?.page_count
+      || body?.meta?.pageCount
+      || body?.meta?.page_count
+      || body?.pagination?.pageCount
+      || body?.pagination?.page_count,
+  );
+
+  if (Number.isFinite(pageCount) && pageCount > 0) {
+    return page < pageCount;
+  }
+
+  const total = Number(body?.total || body?.totalCount || body?.total_count || body?.meta?.total || body?.pagination?.total);
+
+  if (Number.isFinite(total) && total > 0) {
+    return page * perPage < total;
+  }
+
+  return rawCount >= perPage;
+}
+
+async function fetchSwoogoParticipants(config, options = {}) {
+  const authorization = await requestSwoogoAccessToken(config);
+  const perPage = parsePositiveInteger(options.perPage, 1000, 1000);
+  const maxPages = parsePositiveInteger(options.maxPages, 100, 500);
+  const participantsById = new Map();
+  let skippedCount = 0;
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const { body, normalized, rawCount } = await fetchSwoogoParticipantPage(
+      config,
+      authorization,
+      page,
+      perPage,
+    );
+
+    skippedCount += normalized.skippedCount;
+
+    for (const participant of normalized.participants) {
+      participantsById.set(participant.id, participant);
+    }
+
+    if (!hasNextSwoogoPage(body, page, perPage, rawCount)) {
+      break;
+    }
+  }
+
+  return {
+    participants: Array.from(participantsById.values()),
+    skippedCount,
+  };
+}
+
+function swoogoRegistrationTypeDiscoveryParams(config) {
+  const participantAttempts = swoogoParticipantRequestParams(config, 1, 1000);
+  const explicitFieldAttempt = {
+    event_id: config.eventId,
+    fields: [
+      "id",
+      "registration_type",
+      "registration_type_id",
+      "registration_type_name",
+      "registrationType",
+      "registrationTypeId",
+      "registrationTypeName",
+      "registrant_type",
+      "registrant_type_id",
+      "registrant_type_name",
+      "regType",
+      "regTypeId",
+      "regTypeName",
+      "fields",
+      "answers",
+      "custom_fields",
+    ].join(","),
+    include: "fields,answers,custom_fields",
+    page: 1,
+    "per-page": "1000",
+  };
+
+  return [
+    explicitFieldAttempt,
+    ...participantAttempts,
+    ...participantAttempts.map((params) => {
+      const { "per-page": perPage, ...rest } = params;
+
+      return {
+        ...rest,
+        per_page: perPage,
+      };
+    }),
     {
       event_id: config.eventId,
-      fields: [
-        "id",
-        "registration_type",
-        "registration_type_id",
-        "registration_type_name",
-        "registrationType",
-        "registrationTypeId",
-        "registrationTypeName",
-        "registrant_type",
-        "registrant_type_id",
-        "registrant_type_name",
-      ].join(","),
+      page: 1,
       "per-page": "1000",
     },
     {
       event_id: config.eventId,
-      "per-page": "1000",
+      page: 1,
+      per_page: "1000",
     },
   ];
+}
+
+async function fetchSwoogoRegistrationTypesFromRegistrants(config, authorization) {
+  const attempts = swoogoRegistrationTypeDiscoveryParams(config);
   let lastFailure = null;
+  let foundEmptyRegistrantResponse = false;
 
   for (const params of attempts) {
     let body;
@@ -553,7 +1186,16 @@ async function fetchSwoogoRegistrationTypesFromRegistrants(config, authorization
       continue;
     }
 
-    return normalizeSwoogoRegistrationTypesFromRegistrants(body);
+    const registrationTypes = normalizeSwoogoRegistrationTypesFromRegistrants(body);
+    if (registrationTypes.length > 0) {
+      return registrationTypes;
+    }
+
+    foundEmptyRegistrantResponse = true;
+  }
+
+  if (foundEmptyRegistrantResponse) {
+    return [];
   }
 
   throw conflict(
@@ -744,6 +1386,64 @@ function attendeeResponse(snapshot) {
   };
 }
 
+function eventRecordResponse(snapshot) {
+  const data = snapshot.data() || {};
+
+  return {
+    ...firestoreValue(data),
+    id: snapshot.id,
+  };
+}
+
+function recordTimeValue(record) {
+  return String(
+    record.updatedAt
+      || record.createdAt
+      || record.issuedAt
+      || record.printedAt
+      || record.checkedInAt
+      || record.scannedAt
+      || "",
+  );
+}
+
+function sortRecordsByTimeDesc(records) {
+  return records.sort((left, right) => recordTimeValue(right).localeCompare(recordTimeValue(left)));
+}
+
+async function queryParticipantRecords(eventRef, collectionId, participant) {
+  const byId = new Map();
+  const collection = eventRef.collection(collectionId);
+  const queryKeys = [
+    ["participantId", participant.id],
+    ["swoogoRegistrantId", participant.swoogoRegistrantId],
+    ["registrantId", participant.swoogoRegistrantId],
+  ];
+  const seenQueries = new Set();
+  const queries = queryKeys
+    .filter(([key, value]) => {
+      const signature = `${key}:${value}`;
+
+      if (!value || seenQueries.has(signature)) {
+        return false;
+      }
+
+      seenQueries.add(signature);
+      return true;
+    })
+    .map(([key, value]) => collection.where(key, "==", value).limit(100).get());
+
+  const snapshots = await Promise.all(queries);
+
+  for (const snapshot of snapshots) {
+    for (const doc of snapshot.docs) {
+      byId.set(doc.id, eventRecordResponse(doc));
+    }
+  }
+
+  return sortRecordsByTimeDesc(Array.from(byId.values()));
+}
+
 function terminalResponse(snapshot) {
   const data = snapshot.data() || {};
 
@@ -875,6 +1575,74 @@ function creatorMembershipDocument(actor, existing = {}) {
     updatedAt: serverTimestamp(),
     updatedBy: actor.uid,
   };
+}
+
+function participantImportDocument(participant, config, actor, isCreate) {
+  const fullName = normalizeString(participant.fullName, participant.email || participant.id);
+  const profile = {
+    company: normalizeString(participant.company, ""),
+    email: normalizeString(participant.email, ""),
+    firstName: normalizeString(participant.firstName, ""),
+    fullName,
+    jobTitle: normalizeString(participant.jobTitle, ""),
+    lastName: normalizeString(participant.lastName, ""),
+    registrationTypeId: normalizeString(participant.registrationTypeId, ""),
+    registrationTypeName: normalizeString(participant.registrationTypeName, ""),
+  };
+  const update = {
+    company: profile.company,
+    email: profile.email,
+    fullName,
+    jobTitle: profile.jobTitle,
+    name: fullName,
+    normalizedEmail: normalizeEmail(profile.email),
+    participantId: participant.id,
+    profile,
+    registrationStatus: normalizeString(participant.registrationStatus, "registered"),
+    registrationTypeId: profile.registrationTypeId,
+    registrationTypeName: profile.registrationTypeName,
+    source: {
+      importedFromSwoogo: true,
+      lastImportAt: serverTimestamp(),
+      provider: "swoogo",
+    },
+    swoogo: {
+      eventId: config.eventId,
+      lastSyncedAt: serverTimestamp(),
+      registrantId: participant.id,
+    },
+    swoogoEventId: config.eventId,
+    swoogoRegistrantId: participant.id,
+    updatedAt: serverTimestamp(),
+    updatedBy: actor?.uid || "system",
+  };
+
+  if (isCreate) {
+    update.createdAt = serverTimestamp();
+    update.createdBy = actor?.uid || "system";
+    update.credentialing = {
+      status: "not_started",
+      updatedAt: serverTimestamp(),
+    };
+  }
+
+  return update;
+}
+
+function participantHasCredentialingState(data = {}) {
+  const credentialing = data.credentialing && typeof data.credentialing === "object" ? data.credentialing : {};
+  const status = normalizeString(credentialing.status || data.credentialStatus, "");
+  const passiveStatuses = new Set(["", "not_started", "unknown"]);
+
+  return Boolean(
+    credentialing.activeBadgeId
+      || credentialing.activeCredentialId
+      || credentialing.printJobId
+      || data.activeBadgeId
+      || data.activeCredentialId
+      || data.printJobId
+      || !passiveStatuses.has(status),
+  );
 }
 
 function createFirestoreEventStore(db = getFirestoreDb(), auth = getFirebaseAuth()) {
@@ -1421,6 +2189,61 @@ function createFirestoreEventStore(db = getFirestoreDb(), auth = getFirebaseAuth
     );
   }
 
+  async function deleteDocumentsInBatches(docs) {
+    const chunkSize = 400;
+    let deletedCount = 0;
+
+    for (let offset = 0; offset < docs.length; offset += chunkSize) {
+      const batch = db.batch();
+      const chunk = docs.slice(offset, offset + chunkSize);
+
+      chunk.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+      deletedCount += chunk.length;
+    }
+
+    return deletedCount;
+  }
+
+  async function deleteStoredSwoogoRegistrationTypes(eventRef) {
+    const [registrationTypesSnapshot, registrantTypesSnapshot] = await Promise.all([
+      eventRef.collection("registrationTypes").get(),
+      eventRef.collection("registrantTypes").get(),
+    ]);
+    const docs = [...registrationTypesSnapshot.docs, ...registrantTypesSnapshot.docs]
+      .filter((doc) => {
+        const data = doc.data() || {};
+
+        return data.source === "swoogo" || Boolean(data.swoogoEventId);
+      });
+
+    return deleteDocumentsInBatches(docs);
+  }
+
+  async function deleteCachedSwoogoParticipants(eventRef) {
+    const snapshot = await eventRef.collection("participants").where("source.importedFromSwoogo", "==", true).get();
+    const deletableDocs = [];
+    let skippedCount = 0;
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data() || {};
+
+      if (participantHasCredentialingState(data)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      deletableDocs.push(doc);
+    }
+
+    return {
+      deletedCount: await deleteDocumentsInBatches(deletableDocs),
+      skippedCount,
+    };
+  }
+
   async function writeRegistrationTypes(eventRef, registrationTypes, swoogoEventId, actor) {
     await Promise.all(registrationTypes.map((type) => eventRef.collection("registrationTypes").doc(normalizeSlug(type.id, type.id)).set({
       name: type.name,
@@ -1443,6 +2266,160 @@ function createFirestoreEventStore(db = getFirestoreDb(), auth = getFirebaseAuth
     const registrationTypes = await fetchSwoogoRegistrationTypes(config);
     await writeRegistrationTypes(eventRef, registrationTypes, config.eventId, actor);
     return registrationTypes;
+  }
+
+  async function writeSwoogoParticipants(eventRef, participants, config, actor) {
+    const chunkSize = 400;
+    let createdCount = 0;
+    let updatedCount = 0;
+
+    for (let offset = 0; offset < participants.length; offset += chunkSize) {
+      const chunk = participants.slice(offset, offset + chunkSize);
+      const refs = chunk.map((participant) => eventRef.collection("participants").doc(participant.id));
+      const snapshots = await Promise.all(refs.map((ref) => ref.get()));
+      const batch = db.batch();
+
+      snapshots.forEach((snapshot, index) => {
+        const isCreate = !snapshot.exists;
+
+        if (isCreate) {
+          createdCount += 1;
+        } else {
+          updatedCount += 1;
+        }
+
+        batch.set(
+          refs[index],
+          participantImportDocument(chunk[index], config, actor, isCreate),
+          { merge: true },
+        );
+      });
+
+      await batch.commit();
+    }
+
+    return {
+      createdCount,
+      updatedCount,
+    };
+  }
+
+  async function importSwoogoParticipants(eventId, actor, body = {}) {
+    const eventRef = events().doc(eventId);
+    const snapshot = await eventRef.get();
+
+    if (!snapshot.exists) {
+      throw notFound("Event not found");
+    }
+
+    const existing = snapshot.data() || {};
+    const current = swoogoConfigResponse(eventId, existing);
+    const existingSwoogo = getSwoogoIntegration(existing);
+    const existingCredentials = existingSwoogo.credentials && typeof existingSwoogo.credentials === "object"
+      ? existingSwoogo.credentials
+      : {};
+    const consumerKey = normalizeOptionalString(body.consumerKey ?? body.apiKey ?? body.clientId)
+      || existingCredentials.consumerKey
+      || existingCredentials.clientId
+      || existingCredentials.apiKey
+      || null;
+    const consumerSecret = normalizeOptionalString(body.consumerSecret ?? body.clientSecret)
+      || existingCredentials.consumerSecret
+      || existingCredentials.clientSecret
+      || null;
+    const importConfig = {
+      baseUrl: normalizeString(body.baseUrl, current.baseUrl),
+      consumerKey,
+      consumerSecret,
+      eventId: normalizeString(body.eventId, current.eventId),
+    };
+
+    if (!importConfig.eventId || !importConfig.consumerKey || !importConfig.consumerSecret) {
+      throw conflict(
+        "SWOOGO_CREDENTIALS_MISSING",
+        "Swoogo event ID, API key, and secret are required before importing participants.",
+      );
+    }
+
+    const result = await fetchSwoogoParticipants(importConfig, {
+      maxPages: body.maxPages,
+      perPage: body.perPage,
+    });
+    const writeResult = await writeSwoogoParticipants(eventRef, result.participants, importConfig, actor);
+
+    await eventRef.set({
+      swoogo: {
+        authMode: "client_credentials",
+        baseUrl: importConfig.baseUrl,
+        credentials: {
+          consumerKey: importConfig.consumerKey,
+          consumerSecret: importConfig.consumerSecret,
+        },
+        credentialsConfigured: true,
+        enabled: true,
+        eventId: importConfig.eventId,
+        lastParticipantsImport: {
+          createdCount: writeResult.createdCount,
+          importedAt: serverTimestamp(),
+          importedBy: actor.uid,
+          importedCount: result.participants.length,
+          skippedCount: result.skippedCount,
+          updatedCount: writeResult.updatedCount,
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: actor.uid,
+      },
+      updatedAt: serverTimestamp(),
+      updatedBy: actor.uid,
+    }, { merge: true });
+
+    return {
+      createdCount: writeResult.createdCount,
+      importedCount: result.participants.length,
+      participantIds: result.participants.map((participant) => participant.id).slice(0, 100),
+      skippedCount: result.skippedCount,
+      updatedCount: writeResult.updatedCount,
+    };
+  }
+
+  async function clearSwoogoCache(eventId, actor) {
+    const eventRef = events().doc(eventId);
+    const snapshot = await eventRef.get();
+
+    if (!snapshot.exists) {
+      throw notFound("Event not found");
+    }
+
+    const [participantsResult, registrationTypesDeletedCount] = await Promise.all([
+      deleteCachedSwoogoParticipants(eventRef),
+      deleteStoredSwoogoRegistrationTypes(eventRef),
+    ]);
+
+    await eventRef.set({
+      swoogo: {
+        cacheClearedAt: serverTimestamp(),
+        cacheClearedBy: actor.uid,
+        lastParticipantsImport: deleteField(),
+        lastRegistrationTypesImport: deleteField(),
+        updatedAt: serverTimestamp(),
+        updatedBy: actor.uid,
+      },
+      updatedAt: serverTimestamp(),
+      updatedBy: actor.uid,
+    }, { merge: true });
+
+    const updatedSnapshot = await eventRef.get();
+    const storedRegistrationTypes = await readStoredRegistrationTypes(eventRef);
+
+    return {
+      config: {
+        ...swoogoConfigResponse(eventId, updatedSnapshot.data() || {}),
+        registrationTypeCount: storedRegistrationTypes.length,
+      },
+      participantsDeletedCount: participantsResult.deletedCount,
+      participantsSkippedCount: participantsResult.skippedCount,
+      registrationTypesDeletedCount,
+    };
   }
 
   async function importSwoogoRegistrationTypes(eventId, actor, body = {}) {
@@ -1560,6 +2537,47 @@ function createFirestoreEventStore(db = getFirestoreDb(), auth = getFirebaseAuth
     return attendeeSnapshot.docs
       .map((attendee) => attendeeResponse(attendee))
       .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  async function getAttendeeDetail(eventId, attendeeId) {
+    const eventRef = events().doc(eventId);
+    const snapshot = await eventRef.get();
+
+    if (!snapshot.exists) {
+      throw notFound("Event not found");
+    }
+
+    const attendeeRef = eventRef.collection("participants").doc(normalizeString(attendeeId));
+    const attendeeSnapshot = await attendeeRef.get();
+
+    if (!attendeeSnapshot.exists) {
+      throw notFound("Attendee not found");
+    }
+
+    const attendee = attendeeResponse(attendeeSnapshot);
+    const [
+      credentials,
+      printJobs,
+      sessionCheckins,
+      areaPassages,
+      accessPassagesSnapshot,
+    ] = await Promise.all([
+      queryParticipantRecords(eventRef, "credentials", attendee),
+      queryParticipantRecords(eventRef, "printJobs", attendee),
+      queryParticipantRecords(eventRef, "sessionCheckins", attendee),
+      queryParticipantRecords(eventRef, "areaPassages", attendee),
+      attendeeRef.collection("accessPassages").limit(100).get(),
+    ]);
+
+    return {
+      attendee,
+      areaPassages,
+      credentials,
+      participant: eventRecordResponse(attendeeSnapshot),
+      participantAccessPassages: sortRecordsByTimeDesc(accessPassagesSnapshot.docs.map((doc) => eventRecordResponse(doc))),
+      printJobs,
+      sessionCheckins,
+    };
   }
 
   async function reissueCredential(eventId, attendeeId, actor) {
@@ -2014,14 +3032,17 @@ function createFirestoreEventStore(db = getFirestoreDb(), auth = getFirebaseAuth
   }
 
   return {
+    clearSwoogoCache,
     createUser,
     createCredentialingEvent,
     deleteQueue,
     deleteTerminal,
     enableCredentialingEvent,
     getSendGridConfig,
+    getAttendeeDetail,
     getEvent,
     getSwoogoConfig,
+    importSwoogoParticipants,
     importSwoogoRegistrationTypes,
     listAreas,
     listAttendees,
@@ -2051,6 +3072,13 @@ function createFirestoreEventStore(db = getFirestoreDb(), auth = getFirebaseAuth
 }
 
 module.exports = {
+  __test__: {
+    normalizeSwoogoRegistrationTypes,
+    normalizeSwoogoRegistrationTypesFromRegistrants,
+    normalizeSwoogoParticipants,
+    swoogoRegistrationTypeDiscoveryParams,
+    swoogoParticipantRequestParams,
+  },
   canManageCredentialingEvents,
   createFirestoreEventStore,
   isSuperAdmin,

@@ -94,6 +94,17 @@ function validateUidParam(request, _response, next) {
   next();
 }
 
+function validateAttendeeIdParam(request, _response, next) {
+  const { attendeeId } = request.params;
+
+  if (typeof attendeeId !== "string" || attendeeId.trim().length === 0 || attendeeId.includes("/")) {
+    next(validationError([{ field: "attendeeId", message: "attendeeId is required" }]));
+    return;
+  }
+
+  next();
+}
+
 function validateRoleUpsertBody(request, _response, next) {
   const body = request.body || {};
   const details = [];
@@ -507,6 +518,26 @@ function createEventsAdminRouter(options = {}) {
     }),
   );
 
+  router.post(
+    "/events/:eventId/integrations/swoogo/participants/import",
+    validateEventId,
+    requireEventConfigurationContext,
+    requireEventConfigurationManager,
+    asyncHandler(async (request, response) => {
+      sendSuccess(response, await eventStore.importSwoogoParticipants(request.eventId, request.actor, request.body || {}));
+    }),
+  );
+
+  router.delete(
+    "/events/:eventId/integrations/swoogo/cache",
+    validateEventId,
+    requireEventConfigurationContext,
+    requireEventConfigurationManager,
+    asyncHandler(async (request, response) => {
+      sendSuccess(response, await eventStore.clearSwoogoCache(request.eventId, request.actor));
+    }),
+  );
+
   router.get(
     "/events/:eventId/integrations/sendgrid",
     validateEventId,
@@ -620,9 +651,21 @@ function createEventsAdminRouter(options = {}) {
     }),
   );
 
+  router.get(
+    "/events/:eventId/attendees/:attendeeId",
+    validateEventId,
+    validateAttendeeIdParam,
+    requireEventConfigurationContext,
+    requireEventConfigurationManager,
+    asyncHandler(async (request, response) => {
+      sendSuccess(response, await eventStore.getAttendeeDetail(request.eventId, request.params.attendeeId));
+    }),
+  );
+
   router.post(
     "/events/:eventId/attendees/:attendeeId/credentials/reissue",
     validateEventId,
+    validateAttendeeIdParam,
     requireEventConfigurationContext,
     requireEventConfigurationManager,
     asyncHandler(async (request, response) => {

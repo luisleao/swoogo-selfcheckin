@@ -43,6 +43,7 @@ const DEFAULT_CONFIG = {
   terminalId: null,
   terminalName: null,
   terminalTokenPath: null,
+  terminalUi: "on",
   printingTimeoutSeconds: 180,
 };
 
@@ -64,6 +65,7 @@ const ENV_TO_CONFIG_KEY = {
   QUEUE_IDS: "queueIds",
   SPOOLER: "spooler",
   TERMINAL_TOKEN_PATH: "terminalTokenPath",
+  PRINT_WORKER_UI: "terminalUi",
   WORKER_MODE: "mode",
 };
 
@@ -101,6 +103,10 @@ function parseArgs(argv) {
       parsed.terminalId = value;
     } else if (rawKey === "terminal-name") {
       parsed.terminalName = value;
+    } else if (rawKey === "ui") {
+      parsed.terminalUi = value === "true" ? "on" : value;
+    } else if (rawKey === "no-ui") {
+      parsed.terminalUi = "off";
     }
   }
 
@@ -117,6 +123,34 @@ function parseBoolean(value) {
   }
 
   return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+}
+
+function normalizeTerminalUi(value) {
+  if (value === null || value === undefined || value === "") {
+    return DEFAULT_CONFIG.terminalUi;
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "on" : "off";
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return "on";
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return "off";
+  }
+
+  if (normalized === "auto") {
+    return "auto";
+  }
+
+  throw new ConfigError("PRINT_WORKER_UI must be on, off, or auto.", {
+    terminalUi: value,
+  });
 }
 
 function parseInteger(value, label) {
@@ -200,6 +234,7 @@ function normalizeConfig(config, cwd) {
   };
 
   normalized.allowSpoolerExecution = parseBoolean(normalized.allowSpoolerExecution);
+  normalized.terminalUi = normalizeTerminalUi(normalized.terminalUi);
   normalized.claimPollIntervalMs =
     parseInteger(normalized.claimPollIntervalMs, "claimPollIntervalMs") ??
     DEFAULT_CONFIG.claimPollIntervalMs;
@@ -318,6 +353,7 @@ function getPublicConfig(config) {
     spooler: config.spooler,
     terminalId: config.terminalId,
     terminalName: config.terminalName,
+    terminalUi: config.terminalUi,
   };
 }
 

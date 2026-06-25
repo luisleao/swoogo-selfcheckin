@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "print:worker": "node workers/print-worker/index.js",
-    "print:worker:watch": "node workers/print-worker/index.js --mode=watch",
+    "print:worker:watch": "node workers/print-worker/index.js --mode=watch --ui",
     "start": "node src/server.js",
     "test": "node --test test/*.test.js workers/print-worker/test/*.test.js",
     "test:api": "node --test test/*.test.js",

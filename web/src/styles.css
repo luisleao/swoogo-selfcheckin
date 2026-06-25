@@ -79,6 +79,20 @@ td {
   font-size: 0.92rem;
 }
 
+.table-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
 .app-shell {
   display: grid;
   width: 100%;
@@ -964,7 +978,7 @@ td {
 
 .modal {
   display: grid;
-  width: min(100%, 42rem);
+  width: min(100%, 58rem);
   max-height: min(90vh, 54rem);
   overflow: auto;
   gap: 1rem;
@@ -979,6 +993,72 @@ td {
   align-items: start;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.detail-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.detail-grid div {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-alt);
+}
+
+.detail-grid span,
+.detail-section h3 {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.detail-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-section {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.detail-section h3 {
+  margin: 0;
+}
+
+.detail-json {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.detail-json summary {
+  cursor: pointer;
+  padding: 0.75rem;
+  color: var(--accent);
+  font-weight: 850;
+}
+
+.detail-json pre {
+  max-height: 18rem;
+  margin: 0;
+  overflow: auto;
+  padding: 0.75rem;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 0.78rem;
 }
 
 .muted-copy {
@@ -1154,6 +1234,10 @@ td {
   }
 
   .terminal-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 

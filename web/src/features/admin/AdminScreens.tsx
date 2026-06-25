@@ -17,6 +17,7 @@ import type {
   AdminUserSummary,
   AreaSummary,
   AreaUpsertRequest,
+  AttendeeDetail,
   AttendeeSummary,
   EventRoleAssignment,
   EventRoleUpsertRequest,
@@ -675,7 +676,8 @@ export const SwoogoConfigScreen = () => {
   const [credentialDraft, setCredentialDraft] = useState({ consumerKey: "", consumerSecret: "" });
   const [savedEventId, setSavedEventId] = useState("");
   const [confirmSwoogoAction, setConfirmSwoogoAction] = useState<"save" | "import" | null>(null);
-  const [status, setStatus] = useState<"idle" | "loading" | "saving" | "testing" | "importing-types">("idle");
+  const [confirmClearCache, setConfirmClearCache] = useState(false);
+  const [status, setStatus] = useState<"idle" | "loading" | "saving" | "testing" | "importing-types" | "clearing-cache">("idle");
   const [toast, setToast] = useState<{ message: string; tone: "good" | "bad" | "warn" } | null>(null);
 
   useEffect(() => {
@@ -806,6 +808,33 @@ export const SwoogoConfigScreen = () => {
     }
   };
 
+  const clearSwoogoCache = async () => {
+    if (!selectedEvent) {
+      return;
+    }
+
+    setToast(null);
+    setStatus("clearing-cache");
+
+    try {
+      const result = await api.clearSwoogoCache(selectedEvent.id);
+      setConfig({ ...defaultSwoogoConfig, ...result.config });
+      setSavedEventId(result.config.eventId);
+      setConfirmClearCache(false);
+      setToast({
+        message: `${result.participantsDeletedCount} cached participants and ${result.registrationTypesDeletedCount} registration types deleted. ${result.participantsSkippedCount} participants with operational state were preserved.`,
+        tone: result.participantsSkippedCount > 0 ? "warn" : "good",
+      });
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : "Unable to clear Swoogo cache.",
+        tone: "bad",
+      });
+    } finally {
+      setStatus("idle");
+    }
+  };
+
   return (
     <PageFrame title="Swoogo integration">
       {toast ? <Toast message={toast.message} tone={toast.tone} /> : null}
@@ -862,19 +891,29 @@ export const SwoogoConfigScreen = () => {
           <input readOnly value={`${config.registrationTypeCount} types`} />
         </FormField>
         <div className="form-actions form-grid-full">
-          <button className="button button-secondary" disabled={status === "loading" || status === "saving"} onClick={() => void testConfig()} type="button">
+          <button className="button button-secondary" disabled={status !== "idle"} onClick={() => void testConfig()} type="button">
             {status === "testing" ? "Testing" : "Test"}
           </button>
           <button
             className="button button-secondary"
-            disabled={status === "loading" || status === "saving" || status === "testing" || status === "importing-types"}
+            disabled={status !== "idle"}
             onClick={() => void importRegistrationTypes()}
             type="button"
           >
             {status === "importing-types" ? "Importing types" : "Import registration types"}
           </button>
-          <button className="button button-primary" disabled={status === "loading" || status === "testing" || status === "importing-types"} onClick={() => void saveConfig()} type="button">
+          <button className="button button-primary" disabled={status !== "idle"} onClick={() => void saveConfig()} type="button">
             {status === "saving" ? "Saving" : "Save"}
+          </button>
+        </div>
+        <div className="form-actions form-grid-full">
+          <button
+            className="button button-danger"
+            disabled={status !== "idle"}
+            onClick={() => setConfirmClearCache(true)}
+            type="button"
+          >
+            {status === "clearing-cache" ? "Clearing cache" : "Clear Swoogo cache"}
           </button>
         </div>
       </section>
@@ -901,6 +940,28 @@ export const SwoogoConfigScreen = () => {
                 type="button"
               >
                 Delete and continue
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+      {confirmClearCache ? (
+        <Modal onClose={() => setConfirmClearCache(false)} title="Clear Swoogo cache">
+          <div className="form-grid">
+            <p className="form-grid-full">
+              This deletes Swoogo-imported registration types and cached participants that do not have credentialing or print activity. Participants with operational state are preserved.
+            </p>
+            <div className="form-actions form-grid-full">
+              <button className="button button-secondary" onClick={() => setConfirmClearCache(false)} type="button">
+                Cancel
+              </button>
+              <button
+                className="button button-danger"
+                disabled={status === "clearing-cache"}
+                onClick={() => void clearSwoogoCache()}
+                type="button"
+              >
+                {status === "clearing-cache" ? "Clearing" : "Clear cache"}
               </button>
             </div>
           </div>
@@ -2108,11 +2169,11 @@ export const AreasSessionsScreen = () => {
 };
 
 const credentialTone = (status: string): "good" | "neutral" | "warn" | "bad" => {
-  if (["active", "issued", "printed"].includes(status)) {
+  if (["active", "allowed", "complete", "completed", "issued", "printed", "success", "synced"].includes(status)) {
     return "good";
   }
 
-  if (["cancelled", "void", "voided", "revoked"].includes(status)) {
+  if (["blocked", "cancelled", "denied", "failed", "failure", "rejected", "revoked", "void", "voided"].includes(status)) {
     return "bad";
   }
 
@@ -2123,11 +2184,87 @@ const credentialTone = (status: string): "good" | "neutral" | "warn" | "bad" => 
   return "neutral";
 };
 
+const detailValue = (value: unknown, fallback = "-") => {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return JSON.stringify(value);
+};
+
+const firstDetailValue = (record: Record<string, unknown>, keys: string[], fallback = "-") => {
+  for (const key of keys) {
+    const value = detailValue(record[key], "");
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return fallback;
+};
+
+const recordTime = (record: Record<string, unknown>) =>
+  firstDetailValue(record, ["updatedAt", "createdAt", "issuedAt", "printedAt", "checkedInAt", "scannedAt"], "-");
+
+const recordStatus = (record: Record<string, unknown>) =>
+  firstDetailValue(record, ["status", "result", "state"], "-");
+
+const recordDetails = (record: Record<string, unknown>, keys: string[]) =>
+  keys
+    .map((key) => {
+      const value = detailValue(record[key], "");
+      return value ? `${key}: ${value}` : "";
+    })
+    .filter(Boolean)
+    .join(" | ") || "-";
+
+const RecordTable = ({
+  emptyLabel,
+  records,
+  title,
+  detailKeys,
+}: {
+  detailKeys: string[];
+  emptyLabel: string;
+  records: Record<string, unknown>[];
+  title: string;
+}) => (
+  <div className="detail-section">
+    <h3>{title}</h3>
+    {records.length === 0 ? (
+      <EmptyState description={emptyLabel} title="No records" />
+    ) : (
+      <DataTable
+        columns={[
+          { key: "id", label: "ID" },
+          { key: "status", label: "Status" },
+          { key: "time", label: "Time" },
+          { key: "details", label: "Details" },
+        ]}
+        rows={records.map((record) => ({
+          details: recordDetails(record, detailKeys),
+          id: detailValue(record.id),
+          status: <StatusBadge label={recordStatus(record)} tone={credentialTone(recordStatus(record))} />,
+          time: recordTime(record),
+        }))}
+      />
+    )}
+  </div>
+);
+
 export const AttendeesScreen = () => {
   const api = useApi();
   const { selectedEvent } = useEventContext();
   const [attendees, setAttendees] = useState<AttendeeSummary[]>([]);
-  const [status, setStatus] = useState<"idle" | "loading">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "importing">("idle");
+  const [detail, setDetail] = useState<AttendeeDetail | null>(null);
+  const [detailStatus, setDetailStatus] = useState<"idle" | "loading">("idle");
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [reissuingId, setReissuingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: "good" | "bad" | "warn" } | null>(null);
 
@@ -2181,6 +2318,57 @@ export const AttendeesScreen = () => {
     }
   };
 
+  const importFromSwoogo = async () => {
+    if (!selectedEvent) {
+      return;
+    }
+
+    setStatus("importing");
+    setToast(null);
+
+    try {
+      const result = await api.importSwoogoParticipants(selectedEvent.id);
+      setAttendees(await api.listAttendees(selectedEvent.id));
+      setToast({
+        message: `${result.importedCount} participants cached from Swoogo (${result.createdCount} new, ${result.updatedCount} updated, ${result.skippedCount} skipped).`,
+        tone: "good",
+      });
+    } catch (error) {
+      setToast({
+        message: error instanceof Error ? error.message : "Unable to import participants from Swoogo.",
+        tone: "bad",
+      });
+    } finally {
+      setStatus("idle");
+    }
+  };
+
+  const openAttendeeDetail = async (attendee: AttendeeSummary) => {
+    if (!selectedEvent) {
+      return;
+    }
+
+    setDetail({
+      areaPassages: [],
+      attendee,
+      credentials: [],
+      participant: { id: attendee.id },
+      participantAccessPassages: [],
+      printJobs: [],
+      sessionCheckins: [],
+    });
+    setDetailError(null);
+    setDetailStatus("loading");
+
+    try {
+      setDetail(await api.getAttendeeDetail(selectedEvent.id, attendee.id));
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : "Unable to load attendee detail.");
+    } finally {
+      setDetailStatus("idle");
+    }
+  };
+
   return (
     <PageFrame title="Attendees">
       {toast ? <Toast message={toast.message} tone={toast.tone} /> : null}
@@ -2189,11 +2377,23 @@ export const AttendeesScreen = () => {
           <div>
             <h2>Participants</h2>
           </div>
-          <button className="button button-secondary" disabled={status === "loading"} onClick={() => void loadAttendees()} type="button">
-            Refresh
-          </button>
+          <div className="panel-actions">
+            <button
+              className="button button-secondary"
+              disabled={status === "loading" || status === "importing"}
+              onClick={() => void importFromSwoogo()}
+              type="button"
+            >
+              {status === "importing" ? "Importing" : "Import from Swoogo"}
+            </button>
+            <button className="button button-secondary" disabled={status === "loading" || status === "importing"} onClick={() => void loadAttendees()} type="button">
+              Refresh
+            </button>
+          </div>
         </div>
-        {status === "loading" && attendees.length === 0 ? (
+        {status === "importing" ? (
+          <LoadingState label="Importing participants from Swoogo" />
+        ) : status === "loading" && attendees.length === 0 ? (
           <LoadingState label="Loading attendees" />
         ) : attendees.length === 0 ? (
           <EmptyState description="No participants have been imported or manually registered yet." title="No attendees" />
@@ -2229,13 +2429,98 @@ export const AttendeesScreen = () => {
                 credential: <StatusBadge label={credentialStatus} tone={credentialTone(credentialStatus)} />,
                 email: attendee.email || "No email",
                 jobTitle: attendee.jobTitle || "-",
-                name: attendee.name || attendee.email || "Unnamed attendee",
+                name: (
+                  <button className="table-link" onClick={() => void openAttendeeDetail(attendee)} type="button">
+                    {attendee.name || attendee.email || "Unnamed attendee"}
+                  </button>
+                ),
                 registrationType: attendee.registrationTypeId || "-",
               };
             })}
           />
         )}
       </section>
+      {detail ? (
+        <Modal onClose={() => {
+          setDetail(null);
+          setDetailError(null);
+        }} title={detail.attendee.name || detail.attendee.email || "Attendee detail"}>
+          {detailStatus === "loading" ? <LoadingState label="Loading attendee detail" /> : null}
+          {detailError ? <ErrorState message={detailError} /> : null}
+          {detailStatus !== "loading" && !detailError ? (
+            <div className="detail-stack">
+              <div className="detail-grid">
+                <div>
+                  <span>Name</span>
+                  <strong>{detail.attendee.name || "-"}</strong>
+                </div>
+                <div>
+                  <span>Email</span>
+                  <strong>{detail.attendee.email || "No email"}</strong>
+                </div>
+                <div>
+                  <span>Swoogo registrant ID</span>
+                  <strong>{detail.attendee.swoogoRegistrantId}</strong>
+                </div>
+                <div>
+                  <span>Registration type</span>
+                  <strong>{detail.attendee.registrationTypeId || "-"}</strong>
+                </div>
+                <div>
+                  <span>Company</span>
+                  <strong>{detail.attendee.company || "-"}</strong>
+                </div>
+                <div>
+                  <span>Job title</span>
+                  <strong>{detail.attendee.jobTitle || "-"}</strong>
+                </div>
+                <div>
+                  <span>Credential status</span>
+                  <StatusBadge label={detail.attendee.credentialStatus || "unknown"} tone={credentialTone(detail.attendee.credentialStatus || "unknown")} />
+                </div>
+                <div>
+                  <span>Active badge</span>
+                  <strong>{detail.attendee.activeBadgeId || "No active badge"}</strong>
+                </div>
+              </div>
+              <RecordTable
+                detailKeys={["badgeId", "credentialId", "credentialQrPayload", "qrPayload", "printJobId", "reissuedAsBadgeId", "replacedByBadgeId"]}
+                emptyLabel="No badges have been issued for this attendee."
+                records={detail.credentials}
+                title="Badges issued"
+              />
+              <RecordTable
+                detailKeys={["credentialBadgeId", "queueId", "terminalId", "reason", "error"]}
+                emptyLabel="No print jobs found for this attendee."
+                records={detail.printJobs}
+                title="Print jobs"
+              />
+              <RecordTable
+                detailKeys={["sessionId", "credentialBadgeId", "operatorUid", "deviceId", "swoogoScanId", "error"]}
+                emptyLabel="No session check-ins found for this attendee."
+                records={detail.sessionCheckins}
+                title="Session check-ins"
+              />
+              <RecordTable
+                detailKeys={["gateId", "targetAreaId", "fromAreaId", "toAreaId", "credentialBadgeId", "reason", "source"]}
+                emptyLabel="No area passages found for this attendee."
+                records={detail.areaPassages}
+                title="Area passages"
+              />
+              <RecordTable
+                detailKeys={["gateId", "targetAreaId", "fromAreaId", "toAreaId", "credentialBadgeId", "reason", "source"]}
+                emptyLabel="No participant-local access passages found for this attendee."
+                records={detail.participantAccessPassages}
+                title="Participant access log"
+              />
+              <details className="detail-json">
+                <summary>Participant document</summary>
+                <pre>{JSON.stringify(detail.participant, null, 2)}</pre>
+              </details>
+            </div>
+          ) : null}
+        </Modal>
+      ) : null}
     </PageFrame>
   );
 };

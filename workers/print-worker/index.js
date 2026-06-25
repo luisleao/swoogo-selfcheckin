@@ -23,10 +23,15 @@ Common options:
   --terminal-id=ID       Saves the local terminal identity for this machine.
   --terminal-name=NAME   Saves the operator-facing terminal name.
   --terminal-config=PATH Local terminal identity file.
+  --ui                   Force the watch-mode terminal status interface.
+  --ui=auto              Show the interface only when stdout is interactive.
+  --no-ui                Disable the watch-mode terminal status interface.
 
 Without arguments, the worker runs first-time setup: it lists Firestore events,
 registers this terminal, detects printers, saves local config, and starts the worker.
 Dry-run is the default mode when using explicit arguments without --mode.
+Watch mode shows a terminal interface with status, API URL, last check timestamp,
+and recent print jobs by default.
 `);
 }
 

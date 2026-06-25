@@ -15,13 +15,18 @@ and a local print worker for badge printers.
 - Admin event creation and editing at `/admin/event` and `/:eventSlug/admin`.
 - Event-scoped Swoogo integration settings, registration type import, and
   credential validation helpers.
+- Swoogo participant import into `events/{eventId}/participants` for a local
+  Firestore attendee cache.
+- Admin action to clear Swoogo-imported registration types and safe-to-delete
+  participant cache records.
 - Event-scoped SendGrid settings, API test, template listing, and cached
   template mapping stored in Firestore.
 - Queue and terminal administration, including deletion safeguards.
 - Area and session administration for access-control and session scanning.
 - Operational routes for dashboard, pre-check-in, print/pickup, attendee list,
   scanner, and layout editor.
-- Manual attendee list actions, including credential reissue print requests.
+- Manual attendee list actions, including operational detail views and credential
+  reissue print requests.
 - Print worker onboarding for Brother QL-800 or DYMO 650 style deployments.
 - Firestore rule and index manifests for the attendee registry data model.
 - Documentation and implementation backlog under `docs/`.
@@ -164,6 +169,13 @@ Or run directly:
 ```bash
 node workers/print-worker/index.js --mode=watch
 ```
+
+When `watch` runs, it shows a bordered terminal status interface with the current
+worker state, API URL, event, terminal, printer, last check timestamp, last
+error, and recent completed print jobs in columns. Use `--no-ui` or
+`PRINT_WORKER_UI=0` to disable the interface and keep plain logs. Use
+`PRINT_WORKER_UI=auto` when the interface should render only if stdout is an
+interactive terminal.
 
 On first run, the worker lists credentialing events from Firestore, asks for a
 terminal name, printer type, printer queue, and API base URL, then registers the

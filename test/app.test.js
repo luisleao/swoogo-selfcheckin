@@ -658,6 +658,160 @@ test("POST /api/events/:eventId/integrations/swoogo/test forwards draft credenti
   }
 });
 
+test("POST /api/events/:eventId/integrations/swoogo/participants/import imports registrants", async () => {
+  const app = createApp({
+    logger: null,
+    allowTestHeaders: true,
+    eventStore: {
+      importSwoogoParticipants: async (eventId, actor, body) => {
+        assert.equal(eventId, "manager-event");
+        assert.equal(actor.uid, "manager-user");
+        assert.equal(body.perPage, 250);
+
+        return {
+          createdCount: 2,
+          importedCount: 3,
+          participantIds: ["101", "102", "103"],
+          skippedCount: 0,
+          updatedCount: 1,
+        };
+      },
+    },
+  });
+  const { server, baseUrl } = await listen(app);
+
+  try {
+    const response = await fetch(`${baseUrl}/api/events/manager-event/integrations/swoogo/participants/import`, {
+      body: JSON.stringify({
+        perPage: 250,
+      }),
+      headers: {
+        authorization: `Bearer ${fakeJwt({ sub: "manager-user" })}`,
+        "content-type": "application/json",
+        "x-test-global-roles": "event_manager",
+        "x-test-user-id": "manager-user",
+      },
+      method: "POST",
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.importedCount, 3);
+    assert.equal(body.data.createdCount, 2);
+    assert.equal(body.data.updatedCount, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test("DELETE /api/events/:eventId/integrations/swoogo/cache clears Swoogo cache", async () => {
+  const app = createApp({
+    logger: null,
+    allowTestHeaders: true,
+    eventStore: {
+      clearSwoogoCache: async (eventId, actor) => {
+        assert.equal(eventId, "manager-event");
+        assert.equal(actor.uid, "manager-user");
+
+        return {
+          config: {
+            baseUrl: "https://api.swoogo.com",
+            credentialsConfigured: true,
+            credentialsUpdatedAt: null,
+            eventId: "8048",
+            lastTest: { checkedAt: null, message: "Not tested", status: "untested" },
+            registrationTypeCount: 0,
+          },
+          participantsDeletedCount: 4,
+          participantsSkippedCount: 1,
+          registrationTypesDeletedCount: 2,
+        };
+      },
+    },
+  });
+  const { server, baseUrl } = await listen(app);
+
+  try {
+    const response = await fetch(`${baseUrl}/api/events/manager-event/integrations/swoogo/cache`, {
+      headers: {
+        authorization: `Bearer ${fakeJwt({ sub: "manager-user" })}`,
+        "x-test-global-roles": "event_manager",
+        "x-test-user-id": "manager-user",
+      },
+      method: "DELETE",
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.participantsDeletedCount, 4);
+    assert.equal(body.data.participantsSkippedCount, 1);
+    assert.equal(body.data.registrationTypesDeletedCount, 2);
+    assert.equal(body.data.config.registrationTypeCount, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test("GET /api/events/:eventId/attendees/:attendeeId returns attendee detail", async () => {
+  const app = createApp({
+    logger: null,
+    allowTestHeaders: true,
+    eventStore: {
+      getAttendeeDetail: async (eventId, attendeeId) => {
+        assert.equal(eventId, "manager-event");
+        assert.equal(attendeeId, "101");
+
+        return {
+          areaPassages: [],
+          attendee: {
+            activeBadgeId: "badge-1",
+            company: "Acme",
+            credentialStatus: "issued",
+            email: "ana@example.com",
+            id: "101",
+            jobTitle: "Producer",
+            name: "Ana Silva",
+            registrationTypeId: "vip",
+            swoogoRegistrantId: "101",
+          },
+          credentials: [
+            {
+              badgeId: "badge-1",
+              id: "badge-1",
+              status: "issued",
+            },
+          ],
+          participant: {
+            email: "ana@example.com",
+            id: "101",
+          },
+          participantAccessPassages: [],
+          printJobs: [],
+          sessionCheckins: [],
+        };
+      },
+    },
+  });
+  const { server, baseUrl } = await listen(app);
+
+  try {
+    const response = await fetch(`${baseUrl}/api/events/manager-event/attendees/101`, {
+      headers: {
+        authorization: `Bearer ${fakeJwt({ sub: "manager-user" })}`,
+        "x-test-global-roles": "event_manager",
+        "x-test-user-id": "manager-user",
+      },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.attendee.email, "ana@example.com");
+    assert.equal(body.data.credentials[0].badgeId, "badge-1");
+  } finally {
+    server.close();
+  }
+});
+
 test("GET /api/events/:eventId/roles lists event members", async () => {
   const app = createApp({
     logger: null,
