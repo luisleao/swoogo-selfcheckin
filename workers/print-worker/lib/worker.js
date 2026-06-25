@@ -8,6 +8,14 @@ const { createPrintJobClient, normalizePrintJobError } = require("./job-client")
 const { createLogger } = require("./logger");
 const { createLabelRenderData } = require("./render-data");
 const { createSpooler } = require("./spooler");
+const { createTerminalStatusUi } = require("./status-ui");
+
+const silentLogger = {
+  debug() {},
+  error() {},
+  info() {},
+  warn() {},
+};
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -122,19 +130,30 @@ async function processOnce(config, dependencies = {}) {
 }
 
 async function runWatch(config, dependencies = {}) {
-  const logger = dependencies.logger || createLogger(config.logLevel);
+  const statusUi = dependencies.statusUi || createTerminalStatusUi(config);
+  const logger = dependencies.logger || (statusUi.enabled ? silentLogger : createLogger(config.logLevel));
 
   logger.info("print_worker.watch.start", {
     config: getPublicConfig(config),
   });
 
+  statusUi.start();
+
   while (true) {
     try {
-      await processOnce(config, {
+      statusUi.recordCheckStart();
+      const result = await processOnce(config, {
         ...dependencies,
         logger,
       });
+
+      if (result?.status === "printed") {
+        statusUi.recordPrint(result);
+      } else {
+        statusUi.recordNoJob();
+      }
     } catch (error) {
+      statusUi.recordError(error);
       logger.error("print_worker.watch_iteration_failed", {
         error: normalizePrintJobError(error, error.code || "unknown"),
       });

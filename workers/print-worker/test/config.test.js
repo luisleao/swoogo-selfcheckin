@@ -60,6 +60,38 @@ test("loads optional JSON config and lets env override it", () => {
   assert.deepEqual(config.queueIds, ["vip", "default"]);
 });
 
+test("normalizes terminal UI modes from CLI and environment", () => {
+  const forced = loadConfig({
+    argv: ["--mode=dry-run", "--ui"],
+    env: {},
+    cwd: process.cwd(),
+  });
+  assert.equal(forced.terminalUi, "on");
+
+  const auto = loadConfig({
+    argv: ["--mode=dry-run", "--ui=auto"],
+    env: {},
+    cwd: process.cwd(),
+  });
+  assert.equal(auto.terminalUi, "auto");
+
+  const disabled = loadConfig({
+    argv: ["--mode=dry-run", "--no-ui"],
+    env: {},
+    cwd: process.cwd(),
+  });
+  assert.equal(disabled.terminalUi, "off");
+
+  const envDisabled = loadConfig({
+    argv: ["--mode=dry-run"],
+    env: {
+      PRINT_WORKER_UI: "0",
+    },
+    cwd: process.cwd(),
+  });
+  assert.equal(envDisabled.terminalUi, "off");
+});
+
 test("saves terminal identity from execution arguments and reuses it locally", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "print-worker-terminal-"));
   const terminalConfigPath = path.join(tmpDir, "terminal.json");
