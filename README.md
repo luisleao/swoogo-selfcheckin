@@ -228,6 +228,52 @@ See:
 - [Firestore rules](firestore.rules)
 - [Firestore indexes](firestore.indexes.json)
 
+## Firestore Setup Seed
+
+To bootstrap a new `attendee-registry` database with demo operational data, run
+the Firestore setup script after configuring Firebase Admin credentials in the
+root `.env` file.
+
+Preview the seed plan without writing to Firebase:
+
+```bash
+npm run setup:firestore -- --dry-run
+```
+
+Create or update the first admin Auth user and seed the event:
+
+```bash
+SETUP_ADMIN_EMAIL=admin@example.com \
+SETUP_ADMIN_PASSWORD='change-this-password' \
+npm run setup:firestore
+```
+
+The script is idempotent for the same event slug. It creates or updates:
+
+- a Firebase Auth admin user with `super_admin` and `event_manager` custom
+  claims;
+- the matching `users/{uid}` Firestore profile;
+- `/events/{eventSlug}` with `registration=true`;
+- event member roles for the admin user;
+- registration types, queues, terminals, areas, gates, sessions, badge layout,
+  sample participants, credentials, print jobs, queue entries, session
+  check-ins, access passages, and SendGrid message-job examples.
+
+Common options:
+
+| Option or env var | Purpose |
+| --- | --- |
+| `--event-slug` / `SETUP_EVENT_SLUG` | Event document id. Defaults to `demo-credentialing-summit`. |
+| `--event-name` / `SETUP_EVENT_NAME` | Event display name. |
+| `--timezone` / `SETUP_TIMEZONE` | Event timezone. |
+| `--admin-email` / `SETUP_ADMIN_EMAIL` | Admin Firebase Auth email. |
+| `--admin-password` / `SETUP_ADMIN_PASSWORD` | Password used only when the admin user must be created. |
+| `--skip-auth-user` + `--admin-uid` | Seed Firestore for an existing Firebase Auth user without touching Auth. |
+| `--swoogo-event-id` / `SETUP_SWOOGO_EVENT_ID` | Safe Swoogo event id metadata placeholder. |
+
+Swoogo and SendGrid API keys are not seeded. Configure those per event through
+the admin UI.
+
 ## Documentation
 
 - [Automatic event credentialing system](docs/automatic-event-credentialing.md)
